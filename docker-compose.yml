@@ -1,0 +1,11 @@
+
+services:
+  tetris:
+    image: kailashbadu/tetris-app:v1.1.1
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tetris-app
+    ports:
+      - "3000:80"
+    restart: unless-stopped

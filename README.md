@@ -93,4 +93,43 @@ docker images tetris-app
 - Ready to push to any container registry (DockerHub, ECR, GCR)
 Share
 
+### Docker compose
+
+Docker Compose is a tool for defining and running multi-container Docker applications. Instead of running long docker run commands manually every time, you define everything in a single docker-compose.yml file and bring your entire stack up with one command.
+
+Think of it this way:
+
+Dockerfile → defines how to build one container
+
+docker-compose.yml → defines how to run one or more containers together
+
+### Docker Compose vs docker run
+
+|                                    | `docker run` | `docker compose` |
+| ---------------------------------- | ------------ | ---------------- |
+| Single container                   | no           | yes               |
+| Multi container                    | no           | yes              |
+| Reproducible setup                 | no           | yes               |
+| One command for everything         | no           | yes               |
+| Easy to read and share             | no           | yes              |
+| Used in CI/CD pipelines            | no           | yes               |
+| Auto networking between containers | no Manual    | yes Automatic     |
+
+
+## How its fits in DevSecOps pipeline
+
+```bash
+Developer pushes code
+        ↓
+CI/CD pipeline runs:
+  docker compose build   ← builds the image
+  docker compose up -d   ← starts the stack
+        ↓
+Monitoring stack (Prometheus + Grafana) comes up alongside the app
+        ↓
+Everything runs together, networked automatically
+```
+
+As we add more services (Prometheus, Grafana, Loki) in the monitoring step, we simply add them to the same docker-compose.yml — no extra configuration needed.
+
 

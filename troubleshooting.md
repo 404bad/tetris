@@ -30,7 +30,7 @@ ENV NODE_OPTIONS=--openssl-legacy-provider
 ### finally 
 
  then i researched about why these issue , i found it is beacuse of the node verison mismatch issue .
- and use node v 18. and it worked fine.
+ and use node v 16. and it worked fine.
 
 
 result: containeration done with reduced image size to 63 mb.

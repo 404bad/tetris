@@ -15,7 +15,7 @@ A full end-to-end DevSecOps implementation using a classic Tetris game as the ap
 
 Code Push → Build → Test → Security Scan → Docker Image → Push to Registry → Deploy to K8s → Monitor
 
-# Devosifying the tetric application
+# DevOpsifying the tetric application
 
 ## Step 1: Containerization with Docker
 
@@ -116,7 +116,7 @@ docker-compose.yml → defines how to run one or more containers together
 | Auto networking between containers | no Manual    | yes Automatic     |
 
 
-## How its fits in DevSecOps pipeline
+### How its fits in DevSecOps pipeline
 
 ```bash
 Developer pushes code
@@ -132,4 +132,116 @@ Everything runs together, networked automatically
 
 As we add more services (Prometheus, Grafana, Loki) in the monitoring step, we simply add them to the same docker-compose.yml — no extra configuration needed.
 
+## Step 3: CI/CD Pipeline with GitHub Actions
+
+CI (Continuous Integration) means every time I push code, it automatically builds and tests it — catching issues early before they reach production.
+
+CD (Continuous Delivery) means once the build passes, it automatically packages and delivers the artifact (in our case, a Docker image) to a registry — ready to deploy at any time.
+
+Together, CI/CD removes manual steps from my workflow. I push code, the pipeline does the rest.
+
+### Why GitHub Actions?
+
+I chose GitHub Actions because:
+
+- It lives directly in my repository — no separate CI server to manage
+- Free for public repositories
+- Huge library of ready-made actions (checkout, docker login, metadata, build-push)
+- Native integration with GitHub events (push, pull request, tags)
+
+### Pipeline Structure
+
+My pipeline has two jobs that run in sequence:
+
+```
+Push to GitHub
+      ↓
+ ┌─────────────┐
+ │  Job 1      │
+ │  Build &    │
+ │  Test       │
+ └──────┬──────┘
+        │ only if Job 1 passes
+        ↓
+ ┌─────────────┐
+ │  Job 2      │
+ │  Build &    │
+ │  Push to    │
+ │  Docker Hub │
+ └─────────────┘
+```
+
+Job 2 only runs if Job 1 passes. This means I never push a broken image to Docker Hub.
+
+---
+### Pipeline Triggers 
+
+I configured three triggers:
+
+| Trigger | When it fires | What it does |
+|---|---|---|
+| `push to main` | Every time I push code to main | Build, test, push `latest` image |
+| `tag v*` | Every time I create a version tag like `v1.0.0` | Build, test, push versioned image |
+| `pull_request` | Every time I open a PR to main | Build and test only — no push |
+
+The pull request trigger is important — it validates my code before it even merges, acting as a gate.
+
+---
+
+### Why Three Tags: latest, 1.0, 1.0.0
+
+When I push the tag v1.0.0 to GitHub, the metadata action automatically creates three Docker Hub tags for the same image:
+
+
+#### latest
+
+```
+myusername/tetris-app:latest
+
+
+```
+
+This always points to the most recent image built from the main branch. When someone runs docker pull myusername/tetris-app without specifying a version, they get latest. It is the default, and it always reflects the current stable state of the app.
+
+#### 1.0
+
+```
+myusername/tetris-app:1.0
+```
+
+This is the minor version tag — it covers the entire 1.0.x release line. Every time I release v1.0.0, v1.0.1, v1.0.2, this tag gets updated to point to the latest patch. Someone who pins to 1.0 always gets my latest bug fixes within the 1.0 line without jumping to a breaking change in 2.0.
+
+
+#### 1.0.0
+
+```
+myusername/tetris-app:1.0.0
+
+```
+
+This is the exact version tag — it is immutable. Once pushed, it never changes. Someone who pins to 1.0.0 always gets exactly that build, forever. This is critical for reproducibility — if something breaks in 1.0.1, I can always roll back to 1.0.0 with confidence.
+
+This is the standard Docker tagging strategy used in production. It gives consumers of my image the flexibility to choose how much they want to follow updates.
+
+I use a Docker Hub Access Token instead of my actual password. Go to hub.docker.com → Account Settings → Security → New Access Token. This way even if the token is compromised, I can revoke it without changing my password.
+
+#### How to Trigger a Release
+
+```bash
+# Tag the commit
+git tag v1.0.0
+
+# Push the tag to GitHub
+git push origin v1.0.0
+
+
+```
+
+### What I Achieved
+
+- Every push to main automatically builds and tests the app
+- Every version tag automatically publishes a Docker image to Docker Hub
+- Pull requests are validated before merging — nothing broken gets into main
+- Credentials are stored securely as GitHub Secrets — never in code
+- Docker images are properly versioned with three tags for flexibility and reproducibility
 

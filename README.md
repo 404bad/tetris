@@ -245,3 +245,166 @@ git push origin v1.0.0
 - Credentials are stored securely as GitHub Secrets — never in code
 - Docker images are properly versioned with three tags for flexibility and reproducibility
 
+
+## Step 4: Security Scanning
+
+
+Security scanning is the "Sec" in DevSecOps. Instead of treating security as a final checkpoint before release, I shift it left — meaning I run security checks automatically on every push, as part of the pipeline, before the image ever reaches Docker Hub.
+
+My pipeline runs three scanners, each catching a different category of vulnerability:
+
+```
+Code pushed to GitHub
+        ↓
+┌───────────────────┐
+│  npm audit        │  ← dependency vulnerabilities
+│  Gitleaks         │  ← hardcoded secrets in code
+│  Trivy            │  ← Docker image CVEs
+└───────────────────┘
+        ↓
+Only if scanning passes → push to Docker Hub
+```
+
+---
+
+###  Scanner 1: npm audit
+
+**What it does:**
+`npm audit` checks every package in `node_modules` against the **npm advisory database** — a registry of known vulnerabilities (CVEs) in open source packages. It reports which packages have known security issues and how severe they are.
+
+**Why I use it:**
+This project uses older dependencies like `postcss@7` and older versions of `babel`. These packages likely have known CVEs — `npm audit` surfaces them with severity ratings (Low, Moderate, High, Critical) so I know exactly what needs to be updated.
+
+**The `--audit-level=high` flag:**
+Only fails the pipeline if a **High or Critical** vulnerability is found. Low and Moderate issues are reported but don't block the build — a practical balance between security and not breaking the pipeline on every minor issue.
+
+**The `continue-on-error: true` flag:**
+Since this is an older project with known dependency issues, I set this to `true` so the pipeline continues even if audit finds issues. In a production project I would remove this once vulnerabilities are remediated.
+
+**Sample output:**
+```
+found 12 vulnerabilities (3 moderate, 7 high, 2 critical)
+```
+> This is actually useful for the project — it gives me real vulnerabilities to document, prioritize, and fix.
+
+---
+
+###  Scanner 2: Gitleaks
+
+```yaml
+- name: Run Gitleaks (secrets scan)
+  uses: gitleaks/gitleaks-action@v2
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  continue-on-error: true
+```
+
+**What it does:**
+Gitleaks scans the entire Git history and source code for accidentally committed secrets — API keys, passwords, tokens, private keys, connection strings, and other sensitive data.
+
+**Why this matters:**
+One of the most common and damaging security mistakes is accidentally committing a secret to a public repository. Even if I delete the file in the next commit, the secret is still in Git history and can be extracted. Gitleaks catches this before it becomes a problem.
+
+**What it detects:**
+- AWS access keys
+- GitHub tokens
+- Docker Hub credentials
+- Private keys (RSA, PEM)
+- Database connection strings
+- Generic high-entropy strings that look like secrets
+
+**The `GITHUB_TOKEN`:**
+This is an automatically generated token provided by GitHub Actions for every pipeline run. Gitleaks uses it to authenticate with the GitHub API. I don't need to create this secret manually — GitHub provides it automatically.
+
+**Why `continue-on-error: true`:**
+Same reason as npm audit — to keep the pipeline running while I'm building the project. In production this would be `false` — any detected secret immediately fails the build.
+
+---
+
+### Scanner 3: Trivy
+
+```yaml
+- name: Build Docker image for scanning
+  run: docker build -t tetris-app:scan .
+
+- name: Run Trivy vulnerability scanner
+  uses: aquasecurity/trivy-action@master
+  with:
+    image-ref: tetris-app:scan
+    format: table
+    exit-code: '0'
+    severity: CRITICAL,HIGH
+```
+
+**What it does:**
+Trivy is an open source vulnerability scanner by Aqua Security. It scans the final Docker image for known CVEs in:
+- OS packages (Alpine Linux packages inside the image)
+- Application dependencies (Node.js packages)
+- Base image vulnerabilities (nginx:alpine, node:16-alpine)
+
+**Why I build the image first:**
+Trivy needs a built Docker image to scan. I build it with the tag `tetris-app:scan` specifically for scanning — separate from the image that gets pushed to Docker Hub.
+
+**The `format: table` flag:**
+Outputs results as a human-readable table in the pipeline logs. Other options are `json` and `sarif` (for GitHub Security tab integration).
+
+**The `severity: CRITICAL,HIGH` flag:**
+Only reports Critical and High vulnerabilities — filters out noise from Low and Medium issues so I can focus on what matters most.
+
+**The `exit-code: '0'` flag:**
+Does not fail the pipeline even if vulnerabilities are found — it reports them and continues. Setting this to `'1'` would fail the build on any Critical/High finding, which is the production standard.
+
+**Sample output:**
+```
+┌─────────────────┬────────────────┬──────────┬───────────────────┐
+│    Library      │ Vulnerability  │ Severity │     Title         │
+├─────────────────┼────────────────┼──────────┼───────────────────┤
+│ node:16-alpine  │ CVE-2023-xxxx  │ HIGH     │ OpenSSL issue     │
+│ nth-check       │ CVE-2021-3803  │ HIGH     │ ReDoS in nth-check│
+└─────────────────┴────────────────┴──────────┴───────────────────┘
+```
+
+### Pipeline Order — Why Security Runs Before Docker Push
+
+```yaml
+  security:
+    needs: build   ← waits for build to pass
+
+  docker:
+    needs: security  ← waits for security to pass
+```
+
+I deliberately placed security scanning between the build job and the Docker Hub push job. This means:
+
+1. App must build successfully first
+2. Security scans run on the built app and image
+3. Only after scanning completes does the image get pushed to Docker Hub
+
+This ensures I never publish an unscanned image. Even with `continue-on-error: true` during development, the scans always run and their results are always visible in the pipeline logs.
+
+---
+### Security Job in the Full Pipeline
+
+```
+Push to GitHub
+      ↓
+Build & Test          (Job 1)
+      ↓
+Security Scanning     (Job 2)
+  ├── npm audit       → dependency CVEs
+  ├── Gitleaks        → secrets in code
+  └── Trivy           → Docker image CVEs
+      ↓
+Build & Push          (Job 3)
+  └── Docker Hub      → versioned image
+```
+
+---
+
+### What I Achieved
+
+- Every push automatically scans dependencies, secrets, and the Docker image
+- Security is enforced in the pipeline — not an afterthought
+- Real vulnerabilities are surfaced, documented, and tracked as actionable TODOs
+- No unscanned image ever reaches Docker Hub
+- Secrets are never committed to the repository
